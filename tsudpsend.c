@@ -63,6 +63,8 @@ long long int usecDiff(struct timespec* time_stop,
 int main(int argc, char* argv[]) {
   int sockfd;
   int len;
+  int total_lido;
+  int size;
   int sent;
   int ret;
   int is_multicast;
@@ -78,12 +80,13 @@ int main(int argc, char* argv[]) {
   unsigned long long int real_time;
   struct timespec time_start;
   struct timespec time_stop;
-  struct timespec nano_sleep_packet;
+  struct timespec nano_sleep_packet, nano_sleep_packet2;
 
   memset(&addr, 0, sizeof(addr));
   memset(&time_start, 0, sizeof(time_start));
   memset(&time_stop, 0, sizeof(time_stop));
   memset(&nano_sleep_packet, 0, sizeof(nano_sleep_packet));
+  memset(&nano_sleep_packet2, 0, sizeof(nano_sleep_packet2));
 
   if (argc < 5) {
     fprintf(stderr,
@@ -115,6 +118,9 @@ int main(int argc, char* argv[]) {
     perror("socket(): error ");
     return 0;
   }
+
+  size = 1328 * 10;
+  ret = setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(int));
 
   if (argc >= 7) {
     option_ttl = atoi(argv[6]);
@@ -148,31 +154,41 @@ int main(int argc, char* argv[]) {
   packet_time = 0;
   real_time = 0;
 
-  nano_sleep_packet.tv_nsec = 665778; /* 1 packet at 100mbps*/
+  nano_sleep_packet.tv_nsec =
+      100000000 / bitrate * 99865; /* 1 packet at 100mbps*/
+  nano_sleep_packet2.tv_nsec = 99865;
 
   clock_gettime(CLOCK_MONOTONIC, &time_start);
 
   while (!completed) {
-    clock_gettime(CLOCK_MONOTONIC, &time_stop);
-    real_time = usecDiff(&time_stop, &time_start);
-    while (real_time * bitrate > packet_time * 1000000 &&
-           !completed) { /* theorical bits against sent bits */
-      len = read(transport_fd, send_buf, packet_size);
-      if (len < 0) {
-        fprintf(stderr, "ts file read error \n");
-        completed = 1;
-      } else if (len == 0) {
-        fprintf(stderr, "ts sent done\n");
+    total_lido = 0;
+    while ((total_lido < packet_size) && (len >= 0)) {
+      // fprintf(stderr,"1");
+
+      len = read(transport_fd, &send_buf[total_lido], packet_size - total_lido);
+
+      if (len <= 0) return 0;
+
+      if (len > 0)
+        total_lido = total_lido + len;
+      else
+        nanosleep(&nano_sleep_packet2, 0);
+    }
+
+    if (len < 0) {
+      fprintf(stderr, "ts file read error \n");
+      completed = 1;
+    } else if (len == 0) {
+      fprintf(stderr, "ts sent done\n");
+      completed = 1;
+    } else {
+      sent = sendto(sockfd, send_buf, packet_size, 0, (struct sockaddr*)&addr,
+                    sizeof(struct sockaddr_in));
+      if (sent <= 0) {
+        perror("send(): error ");
         completed = 1;
       } else {
-        sent = sendto(sockfd, send_buf, len, 0, (struct sockaddr*)&addr,
-                      sizeof(struct sockaddr_in));
-        if (sent <= 0) {
-          perror("send(): error ");
-          completed = 1;
-        } else {
-          packet_time += packet_size * 8;
-        }
+        packet_time += packet_size * 8;
       }
     }
     nanosleep(&nano_sleep_packet, 0);
