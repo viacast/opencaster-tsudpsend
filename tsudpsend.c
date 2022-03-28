@@ -62,23 +62,42 @@ long long int usecDiff(struct timespec* time_stop,
   return temp / 1000;
 }
 
-int get_bitrate(char* send_buff, int packet_size, double* bitrate) {
+int get_bitrate(int* bitrate_fd, int packet_size, double* bitrate,
+                int* bit_seek) {
   int i = 0;
+  static int get_last_packet = 0;
+  int len = 0;
+  int has_bitrate = 0;
   unsigned char ts_packet[TS_PACKET_SIZE]; /* TS packet */
   u_short pid;
   unsigned int pcr_ext = 0;
   unsigned long long int pcr_base = 0;
   unsigned long long int new_pcr = 0;
   unsigned long long int new_pcr_index = 0;
+  unsigned char* bitrate_buf;
   static unsigned long long int ts_packet_count;
   static unsigned long long int
       pid_pcr_table[MAX_PID]; /* PCR table for the TS packets */
   static unsigned long long int
       pid_pcr_index_table[MAX_PID]; /* PCR index table for the TS packets */
 
+  bitrate_buf = malloc(packet_size);
   /* Read next packet */
-  for (i = 0; i < (packet_size / TS_PACKET_SIZE); i++) {
-    memcpy(ts_packet, (send_buff + (i * TS_PACKET_SIZE)), TS_PACKET_SIZE);
+
+  while (1) {
+    if (i % (packet_size / TS_PACKET_SIZE) == 0) {
+      i = 0;
+      len = read(*bitrate_fd, bitrate_buf, packet_size);
+      *bit_seek = lseek(*bitrate_fd, packet_size, SEEK_CUR);
+
+      if (len == 0) {
+        // fprintf(stderr, "Final do arquivo\n");
+        // sleep(1);
+        break;
+      }
+    }
+
+    memcpy(ts_packet, (bitrate_buf + (i * TS_PACKET_SIZE)), TS_PACKET_SIZE);
 
     /* check packet */
     memcpy(&pid, ts_packet + 1, 2); /* get the 2nd and 3 bytes*/
@@ -115,6 +134,7 @@ int get_bitrate(char* send_buff, int packet_size, double* bitrate) {
           continue;
         }
 
+        has_bitrate = 1;
         fprintf(stderr, "new pcr_index : %llu\n", new_pcr_index);
         fprintf(stderr, "old pcr_index : %llu\n", pid_pcr_index_table[pid]);
         fprintf(stderr, "new pcr : %llu\n", new_pcr);
@@ -137,7 +157,17 @@ int get_bitrate(char* send_buff, int packet_size, double* bitrate) {
         pid_pcr_index_table[pid] = new_pcr_index;
       }
       ts_packet_count++;
+      if (has_bitrate) {
+        fprintf(stderr, "has bitrate\n");
+        i++;
+        *bit_seek = lseek(*bitrate_fd, -(len - (i * TS_PACKET_SIZE)), SEEK_CUR);
+
+        free(bitrate_buf);
+        // sleep(1);
+        break;
+      }
     }
+    i++;
   }
   return 0;
 }
@@ -149,6 +179,9 @@ int main(int argc, char* argv[]) {
   int ret;
   int is_multicast;
   int transport_fd;
+  int bitrate_fd;
+  int transport_seek;
+  int bit_seek;
   unsigned char option_ttl;
   char start_addr[4];
   struct sockaddr_in addr;
@@ -225,6 +258,13 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  bitrate_fd = open(tsfile, O_RDONLY);
+  if (bitrate_fd < 0) {
+    fprintf(stderr, "can't open file %s\n", tsfile);
+    close(sockfd);
+    return 0;
+  }
+
   int completed = 0;
   send_buf = malloc(packet_size);
   packet_time = 0;
@@ -237,29 +277,39 @@ int main(int argc, char* argv[]) {
   while (!completed) {
     clock_gettime(CLOCK_MONOTONIC, &time_stop);
     real_time = usecDiff(&time_stop, &time_start);
-    fprintf(stderr,
-            "Bitrate: %f \t real_time: %llu Teorical bits: %llu \t Sent bits: "
-            "%llu \t Completed: %d\n",
-            bitrate, real_time, (unsigned long long)real_time * packet_time,
-            packet_time * 1000000, completed);
 
+    get_bitrate(&bitrate_fd, packet_size, &bitrate, &bit_seek);
     while (real_time * bitrate > packet_time * 1000000 &&
-           !completed) { /* theorical bits against sent bits */
+           transport_seek < bit_seek) { /* theorical bits against sent bits */
+
+      fprintf(
+          stderr,
+          "Bitrate: %f \t real_time: %llu Teorical bits: %llu \t Sent bits: "
+          "%llu \t Completed: %d\n",
+          bitrate, real_time, (unsigned long long)real_time * packet_time,
+          packet_time * 1000000, completed);
+
       len = read(transport_fd, send_buf, packet_size);
-      get_bitrate(send_buf, packet_size, &bitrate);
+      transport_seek = lseek(transport_fd, packet_size, SEEK_CUR);
+
+      fprintf(stderr, "Transporte seek : %d \t Bit seek %d\n", transport_seek,
+              bit_seek);
 
       if (len < 0) {
         fprintf(stderr, "ts file read error \n");
         completed = 1;
+        break;
       } else if (len == 0) {
         fprintf(stderr, "ts sent done\n");
         completed = 1;
+        break;
       } else {
         sent = sendto(sockfd, send_buf, len, 0, (struct sockaddr*)&addr,
                       sizeof(struct sockaddr_in));
         if (sent <= 0) {
           perror("send(): error ");
           completed = 1;
+          break;
         } else {
           packet_time += packet_size * 8;
         }
