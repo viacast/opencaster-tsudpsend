@@ -31,6 +31,8 @@
 #include <unistd.h>
 
 #define TS_PACKET_SIZE 188
+#define MAX_PID 8192
+#define SYSTEM_CLOCK_FREQUENCY 27000000
 
 long long int usecDiff(struct timespec* time_stop,
                        struct timespec* time_start) {
@@ -60,6 +62,86 @@ long long int usecDiff(struct timespec* time_stop,
   return temp / 1000;
 }
 
+int get_bitrate(char* send_buff, int packet_size, double* bitrate) {
+  int i = 0;
+  unsigned char ts_packet[TS_PACKET_SIZE]; /* TS packet */
+  u_short pid;
+  unsigned int pcr_ext = 0;
+  unsigned long long int pcr_base = 0;
+  unsigned long long int new_pcr = 0;
+  unsigned long long int new_pcr_index = 0;
+  static unsigned long long int ts_packet_count;
+  static unsigned long long int
+      pid_pcr_table[MAX_PID]; /* PCR table for the TS packets */
+  static unsigned long long int
+      pid_pcr_index_table[MAX_PID]; /* PCR index table for the TS packets */
+
+  /* Read next packet */
+  for (i = 0; i < (packet_size / TS_PACKET_SIZE); i++) {
+    memcpy(ts_packet, (send_buff + (i * TS_PACKET_SIZE)), TS_PACKET_SIZE);
+
+    /* check packet */
+    memcpy(&pid, ts_packet + 1, 2); /* get the 2nd and 3 bytes*/
+
+    pid = ntohs(pid);
+    pid = pid & 0x1fff; /* get pid of ts */
+    if (pid < MAX_PID) {
+      int has_adaptation_field = ts_packet[3] & 0x20;
+      int adaptation_field_length = ts_packet[4];
+      int has_pcr_field = ts_packet[5] & 0x10;
+      if (has_adaptation_field && (adaptation_field_length != 0) &&
+          has_pcr_field) {
+        uint64_t pcr_base_first_byte = ts_packet[6] << 25;
+        uint64_t pcr_base_second_byte = ts_packet[7] << 17;
+        uint64_t pcr_base_third_byte = ts_packet[8] << 9;
+        uint64_t pcr_base_fourth_byte = ts_packet[9] << 1;
+        uint64_t pcr_base_last_bit_33 = ts_packet[10] >> 7;
+
+        uint16_t pcr_ext_first_bit = (ts_packet[10] & 1) << 8;
+        uint16_t pcr_ext_last_byte = ts_packet[11];
+
+        pcr_base = (pcr_base_first_byte) + (pcr_base_second_byte) +
+                   (pcr_base_third_byte) + (pcr_base_fourth_byte) +
+                   (pcr_base_last_bit_33);
+
+        pcr_ext = pcr_ext_first_bit + pcr_ext_last_byte;
+
+        new_pcr = pcr_base * 300 + pcr_ext;
+        new_pcr_index = (ts_packet_count * TS_PACKET_SIZE) + 10;
+
+        if (pid_pcr_table[pid] == 0) {
+          pid_pcr_table[pid] = new_pcr;
+          pid_pcr_index_table[pid] = new_pcr_index;
+          continue;
+        }
+
+        fprintf(stderr, "new pcr_index : %llu\n", new_pcr_index);
+        fprintf(stderr, "old pcr_index : %llu\n", pid_pcr_index_table[pid]);
+        fprintf(stderr, "new pcr : %llu\n", new_pcr);
+        fprintf(stderr, "old pcr : %llu\n", pid_pcr_table[pid]);
+
+        double bitrate_local = 0;
+        bitrate_local = (((double)(new_pcr_index - pid_pcr_index_table[pid])) *
+                         8 * SYSTEM_CLOCK_FREQUENCY) /
+                        ((double)(new_pcr - pid_pcr_table[pid]));
+
+        // *bitrate = teste;
+        fprintf(stderr, "Meu bitrate: %f\n", bitrate_local);
+
+        if (bitrate_local >= 1000) {
+          *bitrate = bitrate_local;
+        }
+
+        // *bitrate = (unsigned int)teste;
+        pid_pcr_table[pid] = new_pcr;
+        pid_pcr_index_table[pid] = new_pcr_index;
+      }
+      ts_packet_count++;
+    }
+  }
+  return 0;
+}
+
 int main(int argc, char* argv[]) {
   int sockfd;
   int len;
@@ -73,7 +155,7 @@ int main(int argc, char* argv[]) {
   unsigned long int packet_size;
   char* tsfile;
   unsigned char* send_buf;
-  unsigned int bitrate;
+  double bitrate;
   unsigned long long int packet_time;
   unsigned long long int real_time;
   struct timespec time_start;
@@ -94,20 +176,20 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "bit rate refers to transport stream bit rate\n");
     fprintf(stderr, "zero bitrate is 100.000.000 bps\n");
     return 0;
+  }
+
+  tsfile = argv[1];
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = inet_addr(argv[2]);
+  addr.sin_port = htons(atoi(argv[3]));
+  bitrate = atoi(argv[4]);
+  if (bitrate <= 0) {
+    bitrate = 100000000;
+  }
+  if (argc >= 6) {
+    packet_size = strtoul(argv[5], 0, 0) * TS_PACKET_SIZE;
   } else {
-    tsfile = argv[1];
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(argv[2]);
-    addr.sin_port = htons(atoi(argv[3]));
-    bitrate = atoi(argv[4]);
-    if (bitrate <= 0) {
-      bitrate = 100000000;
-    }
-    if (argc >= 6) {
-      packet_size = strtoul(argv[5], 0, 0) * TS_PACKET_SIZE;
-    } else {
-      packet_size = 7 * TS_PACKET_SIZE;
-    }
+    packet_size = 7 * TS_PACKET_SIZE;
   }
 
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -155,9 +237,17 @@ int main(int argc, char* argv[]) {
   while (!completed) {
     clock_gettime(CLOCK_MONOTONIC, &time_stop);
     real_time = usecDiff(&time_stop, &time_start);
+    fprintf(stderr,
+            "Bitrate: %f \t real_time: %llu Teorical bits: %llu \t Sent bits: "
+            "%llu \t Completed: %d\n",
+            bitrate, real_time, (unsigned long long)real_time * packet_time,
+            packet_time * 1000000, completed);
+
     while (real_time * bitrate > packet_time * 1000000 &&
            !completed) { /* theorical bits against sent bits */
       len = read(transport_fd, send_buf, packet_size);
+      get_bitrate(send_buf, packet_size, &bitrate);
+
       if (len < 0) {
         fprintf(stderr, "ts file read error \n");
         completed = 1;
@@ -175,6 +265,7 @@ int main(int argc, char* argv[]) {
         }
       }
     }
+
     nanosleep(&nano_sleep_packet, 0);
   }
 
