@@ -82,23 +82,17 @@ int get_bitrate(int* bitrate_fd, int packet_size_udp, double* bitrate,
   bitrate_buf = malloc(packet_size_udp);
   /* Read next packet */
 
-  fprintf(stderr, "error\n");
-
   while (1) {
     /* Get packet UDP */
     // TODO tratar os ultimos pacotes.
     int total_lido = 0;
     if (ts_packet_count % (packet_size_udp / TS_PACKET_SIZE) == 0) {
       if (has_bitrate) {
-        // fprintf(stderr, "has bitrate\n");
         free(bitrate_buf);
-
         lseek(*bitrate_fd, -((*n_packets_udp) * packet_size_udp), SEEK_CUR);
-
         break;
       }
 
-      ref_packets = ts_packet_count;
       while (total_lido < packet_size_udp) {
         len = read(*bitrate_fd, bitrate_buf + total_lido,
                    packet_size_udp - total_lido);
@@ -106,28 +100,23 @@ int get_bitrate(int* bitrate_fd, int packet_size_udp, double* bitrate,
         if (len == 0) {
           if (total_lido > 0) {
             *file_over = 1;
-            fprintf(stderr,
-                    "File Over \t N_last packets: %d \t N_last bytes: %d\n\n",
-                    *n_packets_udp, total_lido);
-
+            free(bitrate_buf);
             lseek(*bitrate_fd, -total_lido, SEEK_CUR);
             lseek(*bitrate_fd, -((*n_packets_udp) * packet_size_udp), SEEK_CUR);
-
             return 0;
           }
-          // fprintf(stdout, "Acabou o arquivo \n\n");
-          // fprintf(stdout, "N packets ts : %llu \n\n", ts_packet_count);
           exit(EXIT_SUCCESS);
         }
 
         if (len < 0) {
-          fprintf(stderr, "Error\n");
+          fprintf(stderr, "Error reading file\n");
           exit(EXIT_FAILURE);
         }
 
         if (len > 0) total_lido = total_lido + len;
       }
       *n_packets_udp = *n_packets_udp + 1;
+      ref_packets = ts_packet_count;
     }
 
     unsigned char* ts_packet =
@@ -174,9 +163,6 @@ int get_bitrate(int* bitrate_fd, int packet_size_udp, double* bitrate,
         fprintf(stderr, "old pcr : %llu\n", pid_pcr_table[pid]);
         fprintf(stderr, "Meu bitrate: %f\n", *bitrate);
 
-        fprintf(stderr, "Indice delta is : %llu bytes \n\n\n",
-                new_pcr_index - pid_pcr_index_table[pid]);
-
         pid_pcr_table[pid] = new_pcr;
         pid_pcr_index_table[pid] = new_pcr_index;
       }
@@ -194,7 +180,6 @@ int get_sleep(struct timespec* nanosleep, double bitrate,
   double n_packets = (bitrate / size_udp_packet_bits);
 
   nanosleep->tv_nsec = (one_second_nano / n_packets);
-  fprintf(stderr, "Nano sleep: %lu\n\n", nanosleep->tv_nsec);
   return 0;
 }
 
@@ -210,7 +195,7 @@ int main(int argc, char* argv[]) {
   unsigned char option_ttl;
   char start_addr[4];
   struct sockaddr_in addr;
-  unsigned long int packet_size;
+  unsigned long int packet_size_udp;
   char* tsfile;
   unsigned char* send_buf;
   double bitrate;
@@ -232,7 +217,6 @@ int main(int argc, char* argv[]) {
             argv[0]);
     fprintf(stderr, "ts_packet_per_ip_packet default is 7\n");
     fprintf(stderr, "bit rate refers to transport stream bit rate\n");
-    fprintf(stderr, "zero bitrate is 100.000.000 bps\n");
     return 0;
   }
 
@@ -240,14 +224,11 @@ int main(int argc, char* argv[]) {
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = inet_addr(argv[2]);
   addr.sin_port = htons(atoi(argv[3]));
-  // bitrate = atoi(argv[4]);
-  // if (bitrate <= 0) {
-  //   bitrate = 100000000;
-  // }
+
   if (argc >= 5) {
-    packet_size = strtoul(argv[4], 0, 0) * TS_PACKET_SIZE;
+    packet_size_udp = strtoul(argv[4], 0, 0) * TS_PACKET_SIZE;
   } else {
-    packet_size = 7 * TS_PACKET_SIZE;
+    packet_size_udp = 7 * TS_PACKET_SIZE;
   }
 
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -284,44 +265,33 @@ int main(int argc, char* argv[]) {
   }
 
   int completed = 0;
-  send_buf = malloc(packet_size);
+  send_buf = malloc(packet_size_udp);
   packet_time = 0;
   real_time = 0;
-  // nano_sleep_packet.tv_nsec = 665778; /* 1 packet at 100mbps*/
 
   while (!completed) {
     n_packets_udp = 0;
-    get_bitrate(&transport_fd, packet_size, &bitrate, &n_packets_udp,
+    get_bitrate(&transport_fd, packet_size_udp, &bitrate, &n_packets_udp,
                 &file_over);
-    get_sleep(&nano_sleep_packet, bitrate, packet_size);
-
-    // fprintf(stderr, "N_packets : %d \t bitrate: %f \t\n", n_packets_udp,
-    //         bitrate);
+    get_sleep(&nano_sleep_packet, bitrate, packet_size_udp);
 
     clock_gettime(CLOCK_MONOTONIC, &time_start);
 
     packet_time = 0;
     int i = 0;
     for (i = 0; i < n_packets_udp; i++) {
-      // fprintf(
-      //     stderr,
-      //     "Bitrate: %f \t real_time: %llu Teorical bits: %.0f \t Sent bits: "
-      //     "%llu \t Completed: %d\n",
-      //     bitrate, real_time, real_time * bitrate / (double)1000000,
-      //     packet_time, completed);
-
-      // len = read(transport_fd, send_buf, packet_size);
       int total_lido = 0;
-      while (total_lido < packet_size) {
-        len =
-            read(transport_fd, send_buf + total_lido, packet_size - total_lido);
+      while (total_lido < packet_size_udp) {
+        len = read(transport_fd, send_buf + total_lido,
+                   packet_size_udp - total_lido);
 
-        if (len <= 0) {
-          fprintf(stdout,
-                  "Acabou o arquivo \t Valor de i: %d \t N_packets: %d \t Len: "
-                  "%d\n\n",
-                  i, n_packets_udp, len);
+        // Should not happen.
+        if (len == 0) {
           exit(EXIT_SUCCESS);
+        }
+
+        if (len < 0) {
+          exit(EXIT_FAILURE);
         }
 
         if (len > 0) total_lido = total_lido + len;
@@ -336,7 +306,7 @@ int main(int argc, char* argv[]) {
         break;
       }
 
-      packet_time += packet_size * 8;
+      packet_time += packet_size_udp * 8;
       clock_gettime(CLOCK_MONOTONIC, &time_stop);
       real_time = usecDiff(&time_stop, &time_start);
 
@@ -347,7 +317,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (file_over) {
-      len = read(transport_fd, send_buf, packet_size);
+      len = read(transport_fd, send_buf, packet_size_udp);
       sent = sendto(sockfd, send_buf, len, 0, (struct sockaddr*)&addr,
                     sizeof(struct sockaddr_in));
 
