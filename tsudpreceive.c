@@ -145,9 +145,6 @@ int main(int argc, char *argv[]) {
       long long rx_rate_bytes_ms = bytes_ll / msec;
       long long rx_rate_bits_s = rx_rate_bytes_ms * 8000;
       fprintf(stderr, "Rx rate: %lld bits/s\n", rx_rate_bits_s);
-      fprintf(stderr, "Rx rate: %lld bytes/ms\n", rx_rate_bytes_ms);
-      fprintf(stderr, "Bytes: %lld \n", bytes_ll);
-      fprintf(stderr, "Time: %lld ms\n\n", msec);
       bytes_sent = 0;
     }
 
