@@ -36,30 +36,29 @@
 
 long long int usecDiff(struct timespec* time_stop,
                        struct timespec* time_start) {
+  struct timespec result;
   long long int temp = 0;
   long long int utemp = 0;
 
-  if (time_stop && time_start) {
-    if (time_stop->tv_nsec >= time_start->tv_nsec) {
-      utemp = time_stop->tv_nsec - time_start->tv_nsec;
-      temp = time_stop->tv_sec - time_start->tv_sec;
-    } else {
-      utemp = time_stop->tv_nsec + 1000000000 - time_start->tv_nsec;
-      temp = time_stop->tv_sec - 1 - time_start->tv_sec;
-    }
-    if (temp >= 0 && utemp >= 0) {
-      temp = (temp * 1000000000) + utemp;
-    } else {
-      fprintf(stderr, "start time %ld.%ld is after stop time %ld.%ld\n",
-              time_start->tv_sec, time_start->tv_nsec, time_stop->tv_sec,
-              time_stop->tv_nsec);
-      temp = -1;
-    }
-  } else {
+  if (!time_stop || !time_start) {
     fprintf(stderr, "memory is garbaged?\n");
-    temp = -1;
+    return -1;
   }
-  return temp / 1000;
+
+  result.tv_sec = time_stop->tv_sec - time_start->tv_sec;
+  result.tv_nsec = time_stop->tv_nsec - time_start->tv_nsec;
+  if (result.tv_nsec < 0) {
+    --result.tv_sec;
+    result.tv_nsec += 1000000000L;
+  }
+
+  if (result.tv_sec < 0) {
+    fprintf(stderr, "start time %ld.%ld is after stop time %ld.%ld\n",
+            time_start->tv_sec, time_start->tv_nsec, time_stop->tv_sec,
+            time_stop->tv_nsec);
+    return -1;
+  }
+  return ((result.tv_sec * 1000000000) + result.tv_nsec) / 1000;
 }
 
 int get_bitrate(int* bitrate_fd, int packet_size_udp, double* bitrate,
