@@ -130,13 +130,20 @@ int main(int argc, char *argv[]) {
 
   clock_gettime(CLOCK_MONOTONIC, &time_start);
   int bytes_sent = 0;
-  int max_errors =0 ;
+  int max_errors_rcv = 0;
+  int max_errors_wrt = 0;
   while (1) {
-    if (max_errors >= 5){
+    if (max_errors_rcv >= 5) {
       fprintf(stderr, "Max errors in sequence ocurred\n");
-      exit (EXIT_FAILURE);
+      exit(EXIT_FAILURE);
     }
-    if (bytes_sent >= bytes_sent_bitrate) {
+
+    if (max_errors_wrt >= 5) {
+      fprintf(stderr, "Max errors in sequence ocurred\n");
+      exit(EXIT_FAILURE);
+    }
+
+    if (bytes_sent_bitrate && bytes_sent >= bytes_sent_bitrate) {
       clock_gettime(CLOCK_MONOTONIC, &time_stop);
       long long msec = msecDiff(&time_stop, &time_start);
       clock_gettime(CLOCK_MONOTONIC, &time_start);
@@ -151,15 +158,22 @@ int main(int argc, char *argv[]) {
     len = recvfrom(sockfd, udp_packet, UDP_MAXIMUM_SIZE, 0,
                    (struct sockaddr *)&addr, &addrlen);
     if (len < 0) {
-      max_errors ++;
+      max_errors_rcv++;
       perror("recvfrom(): error ");
       continue;
     }
-    int n = write(STDOUT_FILENO, udp_packet, len);
-    if ( n < 0 ){
-      fprintf(stderr, "Error on write in file");
+    max_errors_rcv = 0;
+
+    if (bytes_sent_bitrate) {
+      bytes_sent += len;
     }
-    bytes_sent += len;
-    max_errors = 0 ;
+
+    int n = write(STDOUT_FILENO, udp_packet, len);
+    if (n < 0) {
+      max_errors_wrt++;
+      fprintf(stderr, "Error on write in file");
+      continue;
+    }
+    max_errors_wrt = 0;
   }
 }
