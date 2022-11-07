@@ -57,7 +57,7 @@ long long int msecDiff(struct timespec *time_stop,
             time_stop->tv_nsec);
     return -1;
   }
-  return ((result.tv_sec * 1000000000) + result.tv_nsec) / 1000000;
+  return ((result.tv_sec * 1000000000) + result.tv_nsec);
 }
 
 int main(int argc, char *argv[]) {
@@ -146,12 +146,13 @@ int main(int argc, char *argv[]) {
     if (bytes_sent_bitrate && bytes_sent >= bytes_sent_bitrate) {
       clock_gettime(CLOCK_MONOTONIC, &time_stop);
       long long msec = msecDiff(&time_stop, &time_start);
-      clock_gettime(CLOCK_MONOTONIC, &time_start);
+  //    clock_gettime(CLOCK_MONOTONIC, &time_start);
+      memcpy(&time_start,&time_stop, sizeof(time_start));
 
       long long bytes_ll = (bytes_sent);
-      long long rx_rate_bytes_ms = bytes_ll / msec;
-      long long rx_rate_bits_s = rx_rate_bytes_ms * 8000;
-      fprintf(stderr, "Rx rate: %lld bits/s\n", rx_rate_bits_s);
+      long long int rx_rate_bits_s = (bytes_ll * 8000000000) / msec;
+//      long long rx_rate_bits_s = rx_rate_bytes_ms * 8000;
+      fprintf(stderr, "Rate: %lld bps\r", rx_rate_bits_s);
       bytes_sent = 0;
     }
 
