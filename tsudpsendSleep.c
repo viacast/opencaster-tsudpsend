@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
-
+#define _GNU_SOURCE
 #define MULTICAST
 
 #include <arpa/inet.h>
@@ -141,12 +141,25 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  transport_fd = open(tsfile, O_RDONLY);
-  if (transport_fd < 0) {
-    fprintf(stderr, "can't open file %s\n", tsfile);
-    close(sockfd);
-    return 0;
+    
+  if (strncmp(tsfile,"/dev/stdin",10) == 0){
+    transport_fd = stdin;
+    fprintf(stderr, "Set pipesize\n");
+    fcntl(transport_fd, F_SETPIPE_SZ, 4*size);
+  }else{
+    transport_fd = open(tsfile, O_RDONLY);
+      if (transport_fd < 0) {
+      fprintf(stderr, "can't open file %s\n", tsfile);
+      close(sockfd);
+      return 0;
+    }
   }
+
+  int pipe_size =  fcntl(transport_fd, F_GETPIPE_SZ);
+  fprintf(stderr, "Pipe size: %d\n", pipe_size);
+
+
+
 
   int completed = 0;
   send_buf = malloc(packet_size);
