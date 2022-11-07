@@ -143,9 +143,11 @@ int main(int argc, char* argv[]) {
 
     
   if (strncmp(tsfile,"/dev/stdin",10) == 0){
-    transport_fd = stdin;
+    transport_fd = STDIN_FILENO;
+    int pipe_size =  fcntl(transport_fd, F_GETPIPE_SZ);
+    fprintf(stderr, "Pipe size: %d\n", pipe_size);
     fprintf(stderr, "Set pipesize\n");
-    fcntl(transport_fd, F_SETPIPE_SZ, 4*size);
+    fcntl(transport_fd, F_SETPIPE_SZ, 192512);
   }else{
     transport_fd = open(tsfile, O_RDONLY);
       if (transport_fd < 0) {
