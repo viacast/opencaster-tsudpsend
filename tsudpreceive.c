@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
-
+#define _GNU_SOURCE
 #define MULTICAST
 
 #include <arpa/inet.h>
@@ -110,6 +110,15 @@ int main(int argc, char *argv[]) {
 
   int bytes_sent_bitrate = atoi(argv[3]);
 
+  // Set pipe size
+  int fd_pipe = STDOUT_FILENO;
+  int pipe_size = fcntl(fd_pipe, F_GETPIPE_SZ);
+  fprintf(stderr, "Pipe size: %d\n", pipe_size);
+  fprintf(stderr, "Set pipesize\n");
+  fcntl(fd_pipe, F_SETPIPE_SZ, 192512);
+  pipe_size =  fcntl(fd_pipe, F_GETPIPE_SZ);
+  fprintf(stderr, "Pipe size: %d\n", pipe_size);
+
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   if (sockfd < 0) {
     perror("socket(): error ");
@@ -152,12 +161,12 @@ int main(int argc, char *argv[]) {
     if (bytes_sent_bitrate && bytes_sent >= bytes_sent_bitrate) {
       clock_gettime(CLOCK_MONOTONIC, &time_stop);
       long long msec = msecDiff(&time_stop, &time_start);
-  //    clock_gettime(CLOCK_MONOTONIC, &time_start);
-      memcpy(&time_start,&time_stop, sizeof(time_start));
+      //    clock_gettime(CLOCK_MONOTONIC, &time_start);
+      memcpy(&time_start, &time_stop, sizeof(time_start));
 
       long long bytes_ll = (bytes_sent);
       long long int rx_rate_bits_s = (bytes_ll * 8000000000) / msec;
-//      long long rx_rate_bits_s = rx_rate_bytes_ms * 8000;
+      //      long long rx_rate_bits_s = rx_rate_bytes_ms * 8000;
       fprintf(stderr, "Rate: %lld bps\r", rx_rate_bits_s);
       bytes_sent = 0;
     }
