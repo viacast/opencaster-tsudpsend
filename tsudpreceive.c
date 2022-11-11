@@ -64,6 +64,9 @@ int main(int argc, char *argv[]) {
   struct timespec time_start;
   struct timespec time_stop;
 
+  int size;
+  int ret;
+
   memset(&time_start, 0, sizeof(time_start));
   memset(&time_stop, 0, sizeof(time_stop));
 
@@ -112,6 +115,9 @@ int main(int argc, char *argv[]) {
     perror("socket(): error ");
     return 0;
   }
+
+  size = 57528; /* maior multiplo entre 188 e 204 mais proximo de 65535 */
+  ret = setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(int));
 
   reuse = 1;
   if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
